@@ -23,6 +23,12 @@ WITH JIT, 178 20.01400013899911
 <!-- - Transpose instead of reshape in attention -->
 <!-- - Replace BCE + categorical CE -->
 
+- need to standardize benchmarks
+- next step: aftter we finish training with batched shakespeare, we can start scaling up and finding a metric to optimize for 
+    (iether speed to convergence threshold, or iteration speed)
+- todo: need to ingest text data, batch it
+
+<!-- - figure out  -->
 <!-- - set up uv and pyproject.toml -->
 - log softmax, and make categorical CE expect logits
 

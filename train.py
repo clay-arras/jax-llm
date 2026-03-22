@@ -52,7 +52,7 @@ def main() -> None:
     st = time.perf_counter()
     val = 1e100
     it = 0
-    while val > 10:
+    while val > 0.1:
         it += 1
         val, grad = grad_apply(params, x, y, key)
         if it % 10 == 0:
