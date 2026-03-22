@@ -10,7 +10,7 @@ from model import (
     LayerNorm,
     TransformerBlock,
     Transformer,
-    BinaryCrossEntropy,
+    CategoricalCrossEntropy,
 )
 
 
@@ -44,7 +44,7 @@ def main() -> None:
     ff = FeedForward(config=config)
     ln = LayerNorm(channels=config.n_embd)
     block = TransformerBlock(config=config, ff=ff, ln=ln, head=heads)
-    gpt = Transformer(config=config, block=block, ln=ln, loss=BinaryCrossEntropy())
+    gpt = Transformer(config=config, block=block, ln=ln, loss=CategoricalCrossEntropy())
 
     params = gpt.init(key)
     grad_apply = jax.value_and_grad(gpt.apply)
@@ -52,7 +52,7 @@ def main() -> None:
     st = time.perf_counter()
     val = 1e100
     it = 0
-    while val > 5:
+    while val > 10:
         it += 1
         val, grad = grad_apply(params, x, y, key)
         if it % 10 == 0:

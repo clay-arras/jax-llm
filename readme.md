@@ -15,13 +15,17 @@ WITH JIT, 178 20.01400013899911
 
 
 
-- Transpose instead of reshape in attention
-- LayerNorm init: gamma=ones, beta=zeros
-- Scale dropout by 1/(1-p)
-- Replace BCE + softmax with log_softmax + categorical CE
-- Split RNG keys in all init methods and fold_in per training step
-- Xavier/Glorot weight init scaling
+<!-- - LayerNorm init: gamma=ones, beta=zeros -->
+<!-- - Scale dropout by 1/(1-p) -->
+<!-- - Xavier/Glorot weight init scaling (claude) -->
+<!-- - Remove inner @jit decorators, keep only outermost -->
+<!-- - Split RNG keys in all init methods and fold_in per training step -->
+<!-- - Transpose instead of reshape in attention -->
+<!-- - Replace BCE + categorical CE -->
+
+<!-- - set up uv and pyproject.toml -->
+- log softmax, and make categorical CE expect logits
+
 - Add training flag to disable dropout at inference
-- Remove inner @jit decorators, keep only outermost
 - vmap over heads, lax.scan over blocks when scaling
 - Slice position embeddings instead of matmul with eye

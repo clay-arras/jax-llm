@@ -34,27 +34,32 @@ class SelfAttentionHead(Module):
     config: AttentionHeadConfig
 
     def init(self, key) -> dict:
+        k1, k2, k3 = jax.random.split(key, num=3)
         channels = self.config.channels
         head_size = self.config.head_size
+
+        xavier_scl = jnp.sqrt(2.0 / (channels + head_size))
         return {
-            "K": jax.random.normal(key, (channels, head_size)),
-            "Q": jax.random.normal(key, (channels, head_size)),
-            "V": jax.random.normal(key, (channels, head_size)),
+            "K": jax.random.normal(k1, (channels, head_size)) * xavier_scl,
+            "Q": jax.random.normal(k2, (channels, head_size)) * xavier_scl,
+            "V": jax.random.normal(k3, (channels, head_size)) * xavier_scl,
         }
 
     def apply(self, params, x: jax.Array, key) -> jax.Array:
+        cf = self.config
+
         B, T, C = x.shape
-        assert C == self.config.channels
+        assert C == cf.channels
         k = x @ params["K"]  # (B x T x head_size)
         q = x @ params["Q"]
 
-        dK = self.config.head_size
-        weights = q @ k.reshape(B, dK, T) / jnp.sqrt(dK)  # (B x T x T)
+        dK = cf.head_size
+        weights = q @ k.matrix_transpose() / jnp.sqrt(dK)  # (B x T x T)
         weights = jnp.where(jnp.tril(jnp.full((T, T), 1)) == 1, weights, -jax.numpy.inf)
         weights = jax.nn.softmax(weights, axis=-1)
 
-        drop_mask = jax.random.uniform(key, (B, T, T)) > self.config.dropout_rate
-        weights = weights * drop_mask
+        drop_mask = jax.random.uniform(key, (B, T, T)) > cf.dropout_rate
+        weights = weights * drop_mask / (1 - cf.dropout_rate)
 
         v = x @ params["V"]  # (B x T x head_size)
         return weights @ v  # (B x T x head_size)
@@ -66,20 +71,28 @@ class MultiAttentionHead(Module):
 
     def init(self, key) -> dict:
         cf = self.config
+        k1, *head_keys = jax.random.split(key, num=1 + cf.num_heads)
+        xavier_proj = jnp.sqrt(2.0 / (cf.num_heads * cf.head_size + cf.n_embd))
         return {
-            "proj": jax.random.normal(key, (cf.num_heads * cf.head_size, cf.n_embd)),
-            "modules": [self.head.init(key) for _ in range(cf.num_heads)],
+            "proj": jax.random.normal(k1, (cf.num_heads * cf.head_size, cf.n_embd))
+            * xavier_proj,
+            "modules": [self.head.init(hk) for hk in head_keys],
         }
 
     def apply(self, params, x: jax.Array, key) -> jax.Array:
-        B, T, C = x.shape
         cf = self.config
+        B, T, C = x.shape
+        k_drop, *head_keys = jax.random.split(key, num=1 + cf.num_heads)
 
         out = jnp.concatenate(
-            [self.head.apply(pr, x, key) for pr in params["modules"]], axis=-1
+            [
+                self.head.apply(pr, x, hk)
+                for pr, hk in zip(params["modules"], head_keys)
+            ],
+            axis=-1,
         )  # (B, T, head_size * num_heads)
-        drop_mask = jax.random.uniform(key, out.shape) > cf.dropout_rate
-        out = out * drop_mask
+        drop_mask = jax.random.uniform(k_drop, out.shape) > cf.dropout_rate
+        out = out * drop_mask / (1 - cf.dropout_rate)
         out = out @ params["proj"]  # (B, T, n_embd)
         return out
 
@@ -88,10 +101,13 @@ class FeedForward(Module):
     config: AttentionHeadConfig
 
     def init(self, key) -> dict:
+        k1, k2 = jax.random.split(key, num=2)
         n_embd = self.config.n_embd
         return {
-            "fc": jax.random.normal(key, (n_embd, 4 * n_embd)),
-            "proj": jax.random.normal(key, (4 * n_embd, n_embd)),
+            "fc": jax.random.normal(k1, (n_embd, 4 * n_embd))
+            * jnp.sqrt(2.0 / (n_embd + 4 * n_embd)),
+            "proj": jax.random.normal(k2, (4 * n_embd, n_embd))
+            * jnp.sqrt(2.0 / (4 * n_embd + n_embd)),
         }
 
     def apply(self, params, x: jax.Array, key) -> jax.Array:
@@ -102,17 +118,17 @@ class FeedForward(Module):
         x = jax.nn.gelu(x)
         x = x @ params["proj"]
         drop_mask = jax.random.uniform(key, x.shape) > self.config.dropout_rate
-        return x * drop_mask  # (B, T, n_embd)
+        return x * drop_mask / (1 - self.config.dropout_rate)  # (B, T, n_embd)
 
 
 class LayerNorm(Module):
     channels: int
 
-    def init(self, key) -> dict:
+    def init(self) -> dict:
         c = self.channels
         return {
-            "gamma": jax.random.normal(key, (c)),
-            "beta": jax.random.normal(key, (c)),
+            "gamma": jnp.ones((c)),
+            "beta": jnp.zeros((c)),
         }
 
     def apply(self, params, x: jax.Array) -> jax.Array:
@@ -133,50 +149,56 @@ class TransformerBlock(Module):
     head: MultiAttentionHead
 
     def init(self, key) -> dict:
+        k1, k2 = jax.random.split(key, num=2)
         return {
-            "ln1": self.ln.init(key),
-            "head": self.head.init(key),
-            "ln2": self.ln.init(key),
-            "ff": self.ff.init(key),
+            "ln1": self.ln.init(),
+            "head": self.head.init(k1),
+            "ln2": self.ln.init(),
+            "ff": self.ff.init(k2),
         }
 
     def apply(
         self, params, x: jax.Array, key
     ) -> jax.Array:  # output shape: (B, T, n_embd)
+        k1, k2 = jax.random.split(key, num=2)
         ln = self.ln  # TODO: why do you want to apply layer norm before?
-        x = x + self.head.apply(params["head"], ln.apply(params["ln1"], x), key)
-        x = x + self.ff.apply(params["ff"], ln.apply(params["ln2"], x), key)
+        x = x + self.head.apply(params["head"], ln.apply(params["ln1"], x), k1)
+        x = x + self.ff.apply(params["ff"], ln.apply(params["ln2"], x), k2)
         return x
 
 
-class BinaryCrossEntropy(Module):
+class CategoricalCrossEntropy(Module):
     def apply(self, x: jax.Array, y: jax.Array) -> jax.Array:
         B, T, vocab_size = x.shape
-        # y is shape (B, 1, vocab_size), need to broadcast
+        # y is shape (B, T, vocab_size), we have one example for each [0, T] group
+        x = jax.nn.log_softmax(x, axis=-1)
 
         # TODO: not sure if this is good
         # if t is zero, then it clamps to -1e2 because log(0) is NaN
         clog = lambda t: jnp.where(t, jnp.maximum(jnp.log(t), -1e2), -1e2)
-        loss = -(y * clog(x) + (1 - y) * clog(1 - x))
-        return loss.sum()
+        loss = -(y * clog(x))
+        return loss.sum() / (B * T)
 
 
 class Transformer(Module):
     config: AttentionHeadConfig
     block: TransformerBlock
     ln: LayerNorm
-    loss: BinaryCrossEntropy
+    loss: CategoricalCrossEntropy
 
     def init(self, key) -> dict:
         cf = self.config
+        k1, k2, k3, k4 = jax.random.split(key, num=4)
+        block_keys = jax.random.split(k4, num=cf.num_blocks)
         return {
-            "tok_embd": jax.random.normal(key, (cf.vocab_size, cf.n_embd)),
-            "pos_embd": jax.random.normal(
-                key, (cf.context_size, cf.n_embd)
-            ),  # expect (T, context_size)
-            "blocks": [self.block.init(key) for _ in range(cf.num_blocks)],
-            "proj": jax.random.normal(key, (cf.n_embd, cf.vocab_size)),
-            "ln_last": self.ln.init(key),
+            "tok_embd": jax.random.normal(k1, (cf.vocab_size, cf.n_embd))
+            * jnp.sqrt(2.0 / (cf.vocab_size + cf.n_embd)),
+            "pos_embd": jax.random.normal(k2, (cf.context_size, cf.n_embd))
+            * jnp.sqrt(2.0 / (cf.context_size + cf.n_embd)),  # expect (T, context_size)
+            "blocks": [self.block.init(bk) for bk in block_keys],
+            "proj": jax.random.normal(k3, (cf.n_embd, cf.vocab_size))
+            * jnp.sqrt(2.0 / (cf.n_embd + cf.vocab_size)),
+            "ln_last": self.ln.init(),
         }
 
     @partial(jax.jit, static_argnames=["self"])
@@ -191,11 +213,9 @@ class Transformer(Module):
         x = posits + tokits
         assert x.shape == (B, T, cf.n_embd)
 
-        for block_param in params["blocks"]:
-            x = self.block.apply(block_param, x, key)
+        block_keys = jax.random.split(key, num=cf.num_blocks)
+        for block_param, bkey in zip(params["blocks"], block_keys):
+            x = self.block.apply(block_param, x, bkey)
         x = self.ln.apply(params["ln_last"], x)
         x = x @ params["proj"]
-        x = jax.nn.softmax(
-            x, axis=-1
-        )  # TODO: consider using log softmax for num stablility
         return self.loss.apply(x, y)
