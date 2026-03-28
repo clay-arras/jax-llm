@@ -6,8 +6,7 @@ authors = [{ name = "clay-arras", email = "astrollin.neil@gmail.com" }]
 requires-python = ">=3.11,<3.15"
 readme = "README.md"
 dependencies = [
-    "jax>=0.9.2",
-    "jax-metal>=0.1.1",
+    "jax[cuda12]>=0.9.2",
 ]
 
 [dependency-groups]

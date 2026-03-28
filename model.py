@@ -54,7 +54,7 @@ class SelfAttentionHead(Module):
         q = x @ params["Q"]
 
         dK = cf.head_size
-        weights = q @ k.matrix_transpose() / jnp.sqrt(dK)  # (B x T x T)
+        weights = q @ jnp.matrix_transpose(k) / jnp.sqrt(dK)  # (B x T x T)
         weights = jnp.where(jnp.tril(jnp.full((T, T), 1)) == 1, weights, -jax.numpy.inf)
         weights = jax.nn.softmax(weights, axis=-1)
 
@@ -175,7 +175,7 @@ class CategoricalCrossEntropy(Module):
 
         # TODO: not sure if this is good
         # if t is zero, then it clamps to -1e2 because log(0) is NaN
-        clog = lambda t: jnp.where(t, jnp.maximum(jnp.log(t), -1e2), -1e2)
+        clog = lambda t: jnp.where(t, jnp.maximum(t, -1e2), -1e2)
         loss = -(y * clog(x))
         return loss.sum() / (B * T)
 
