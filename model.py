@@ -175,7 +175,7 @@ class CategoricalCrossEntropy(Module):
 
         # TODO: not sure if this is good
         # if t is zero, then it clamps to -1e2 because log(0) is NaN
-        clog = lambda t: jnp.where(t, jnp.maximum(jnp.log(t), -1e2), -1e2)
+        clog = lambda t: jnp.where(t, jnp.maximum(t, -1e2), -1e2)
         loss = -(y * clog(x))
         return loss.sum() / (B * T)
 

@@ -1,4 +1,5 @@
 # data/
+ckpt/
 
 uv.lock
 .python-version
